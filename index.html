@@ -8,11 +8,20 @@
 <style>
 html,body{margin:0;height:100%;background:#000;overflow:hidden}
 body{display:flex;align-items:center;justify-content:center}
+#stage{position:relative}
 canvas{width:min(100vw,160vh);height:min(62.5vw,100vh);image-rendering:pixelated;image-rendering:crisp-edges;display:block;cursor:crosshair}
+#music-credit{position:absolute;left:4%;right:4%;top:74.5%;text-align:center;font:11px/1.2 monospace;color:#f4f7f1;text-decoration:none;text-shadow:0 1px 2px #000,0 0 4px #000;z-index:2}
+#music-credit:hover{color:#f0d18e}
+#sc-player{position:fixed;left:0;bottom:0;width:320px;height:166px;border:0;opacity:0;pointer-events:none}
 </style>
 </head>
 <body>
+<div id="stage">
 <canvas id="c" width="640" height="400"></canvas>
+<a id="music-credit" href="https://soundcloud.com/iamlunchboxxx/eminem-fall-lunchboxxx-remix" target="_blank" rel="noopener noreferrer">Music: Fall (LunchBoxxx Remix) by LunchBoxxx on SoundCloud</a>
+</div>
+<iframe id="sc-player" title="Fall (LunchBoxxx Remix) by LunchBoxxx" allow="autoplay; encrypted-media" loading="eager" src="https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F495695484&amp;auto_play=false&amp;hide_related=true&amp;show_comments=false&amp;show_user=false&amp;show_reposts=false&amp;show_teaser=false&amp;visual=false&amp;show_artwork=false&amp;buying=false&amp;liking=false&amp;download=false&amp;sharing=false"></iframe>
+<script src="https://w.soundcloud.com/player/api.js" async onload="window.__initMusic&&window.__initMusic()" onerror="void 0"></script>
 <script>
 'use strict';
 // ================= CONSTANTS =================
@@ -350,7 +359,7 @@ function initLevel() {
 function mkEnemy(type,x,y){return {type,x,y,hp:type==='zombie'?100:type==='skeleton'?75:65,dead:false,alert:false,cd:rnd(.5,1.5),anim:0,flash:0,painT:0,atkT:0,lx:x,ly:y};}
 function msg(t) { msgText = t; msgT = 3; }
 function startGame() {
-  initAudio(); initLevel(); state = 'play'; lockPointer();
+  initAudio(); initLevel(); state = 'play'; lockPointer(); armMusic();
 }
 function lockPointer() {
   try { const p = cv.requestPointerLock && cv.requestPointerLock(); if (p && p.catch) p.catch(() => { }); } catch (e) { }
@@ -398,7 +407,7 @@ function shoot(){
  if(state!=='play'||weapon.cd>0)return;
  const g=GUNS[currentGun];if(currentGun===3&&spin<.65)return;
  if(ammo[g.ammo]<g.cost){weapon.cd=.3;sfx('click');msg('Out of '+g.ammo);return;}
- ammo[g.ammo]-=g.cost;weapon.cd=fireDelay();weapon.flash=currentGun===4?.15:.065;weapon.recoil=currentGun===2?1.5:1;weapon.pumped=false;
+ ammo[g.ammo]-=g.cost;weapon.cd=fireDelay();weapon.flash=currentGun===4?.15:.065;weapon.recoil=currentGun===2?1.5:1;weapon.pumped=false;duckMusic();
  tone(currentGun===5?'sine':'sawtooth',g.sound,g.sound*.35,g.delay*.3+.04,.13);noise(.075,.12,1600,100);
  let mult=(1+gunUp[currentGun]*.2+(skills[0]?.2:0)+(skills[3]?.25:0))*(powers.quad>0?4:1);
  if(skills[2]&&Math.random()<.2){mult*=2;msg('CRITICAL!');}
@@ -736,7 +745,7 @@ function drawTitle() {
   ctx.fillStyle = g; ctx.fillText('DOOM', W / 2, 120);
   centerText('BLOCKFALL • ORIGINAL PIXEL FORTRESS', 150, 20, '#ccc');
   ctx.font = '14px monospace'; ctx.fillStyle = '#ddd'; ctx.textAlign = 'center';
-  const lines=['WASD move • SHIFT run • MOUSE / ARROWS aim', 'CLICK / SPACE fire • 1–6 / WHEEL switch guns', 'E talk / trade • K / TAB skill tree • Q dash', 'M map • L leaderboard • R restart', 'Find Corvin and the Warden in the sanctuary.', '60 monsters. One fortress. Reach the green EXIT.'];
+  const lines=['WASD move • SHIFT run • MOUSE / ARROWS aim', 'CLICK / SPACE fire • 1–6 / WHEEL switch guns', 'E talk / trade • K / TAB skill tree • Q dash', 'M map • L leaderboard • N music • R restart', 'Find Corvin and the Warden in the sanctuary.', '60 monsters. One fortress. Reach the green EXIT.'];
   lines.forEach((l, i) => ctx.fillText(l, W / 2, 186 + i * 21));
   if (Math.floor(titleT * 2) % 2 === 0) centerText('PRESS ENTER OR CLICK TO START', 340, 24, '#ff3020');
 }
@@ -809,6 +818,8 @@ function drawEnd(win){
 let last = performance.now(), fpsAcc = 0, fpsN = 0, fps = 0;
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if(musicDuckTimer>0){musicDuckTimer-=dt;if(musicDuckTimer<=0){musicDuckTimer=0;try{if(musicWidget&&musicReady&&musicOn)musicWidget.setVolume(100);}catch(e){}}}
+  const credit=document.getElementById('music-credit');if(credit)credit.hidden=state!=='title';
   fpsAcc += dt; fpsN++; if (fpsAcc >= 1) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
   titleT += dt;
   if (state === 'play') update(dt);
@@ -842,6 +853,7 @@ function loop(now) {
 window.addEventListener('keydown',e=>{
  if(['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
  if((state==='win'||state==='dead')&&entryMode){e.preventDefault();if(e.code==='Enter')saveRun();else if(e.code==='Escape')entryMode=false;else if(e.code==='Backspace')runName=runName.slice(0,-1);else if(e.key.length===1&&/^[a-zA-Z0-9 _-]$/.test(e.key)&&runName.length<12)runName+=e.key;return;}
+ if(e.code==='KeyN'&&!e.repeat){toggleMusic();return;}
  if(e.code==='KeyC'&&['leaderboard','win','dead'].includes(state)){if(confirm('Clear all local leaderboard scores? This cannot be undone.')){scoreRows=[];try{localStorage.removeItem('blockfall-scores');}catch(e){}}return;}
  if(state==='leaderboard'){if(e.code==='KeyT'){if(!e.repeat){boardView=boardView==='local'?'global':'local';if(boardView==='global')loadGlobal();}return;}if(e.code==='Escape'||e.code==='KeyL')state=scoreReturn;return;}
  if(e.code==='KeyL'&&['title','win','dead'].includes(state)){scoreReturn=state;boardView='global';state='leaderboard';loadGlobal();return;}
@@ -874,7 +886,17 @@ cv.addEventListener('contextmenu',e=>e.preventDefault());
 
 initLevel();
 // small debug hook (used for automated testing)
-window.__game={get state(){return state;},get player(){return player;},get enemies(){return enemies;},get items(){return items;},get fps(){return fps;},get ammo(){return ammo;},get currentGun(){return currentGun;},get owned(){return owned;},get skills(){return skills;},get skillPoints(){return skillPoints;},get level(){return level;},get quest(){return quest;},get powers(){return powers;},get villagers(){return villagers;},get grid(){return grid;},get projectiles(){return projectiles;},get scores(){return scoreRows;},get gunUp(){return gunUp;},get shop(){return SHOP;},get npc(){return npc;},get boardStatus(){return globalStatus;},get boardRows(){return globalRows;},get boardFallen(){return globalFallen;},get boardView(){return boardView;},get onlineNote(){return onlineNote;},get time(){return time;},formatDate:formatScoreDate,openShop,buyItem,closeShop,damagePlayer,start:startGame,switchGun,shoot,update,purchaseSkill,grantXP,collect,talkTo,hurtEnemy,render};
+window.__game={get state(){return state;},get player(){return player;},get enemies(){return enemies;},get items(){return items;},get fps(){return fps;},get ammo(){return ammo;},get currentGun(){return currentGun;},get owned(){return owned;},get skills(){return skills;},get skillPoints(){return skillPoints;},get level(){return level;},get quest(){return quest;},get powers(){return powers;},get villagers(){return villagers;},get grid(){return grid;},get projectiles(){return projectiles;},get scores(){return scoreRows;},get gunUp(){return gunUp;},get shop(){return SHOP;},get npc(){return npc;},get boardStatus(){return globalStatus;},get boardRows(){return globalRows;},get boardFallen(){return globalFallen;},get boardView(){return boardView;},get onlineNote(){return onlineNote;},get time(){return time;},get musicOn(){return musicOn;},get musicReady(){return musicReady;},formatDate:formatScoreDate,openShop,buyItem,closeShop,damagePlayer,start:startGame,switchGun,shoot,update,purchaseSkill,grantXP,collect,talkTo,hurtEnemy,render};
+// SoundCloud widget. The track stays on SoundCloud; a missing player never stops the game.
+let musicOn=true,musicArmed=false,musicReady=false,musicWidget=null,musicDuckTimer=0;
+try{musicOn=localStorage.getItem('blockfall-music')!=='0';}catch(e){}
+function applyMusic(){if(!musicWidget||!musicReady)return;try{if(!musicOn||!musicArmed){musicWidget.pause();return;}musicWidget.setVolume(musicDuckTimer>0?70:100);musicWidget.play();}catch(e){}}
+function armMusic(){musicArmed=true;applyMusic();}
+function toggleMusic(){musicOn=!musicOn;try{localStorage.setItem('blockfall-music',musicOn?'1':'0');}catch(e){}if(musicOn&&state!=='title')musicArmed=true;applyMusic();if(state==='play')msg(musicOn?'Music on':'Music off');}
+function duckMusic(){if(!musicOn||!musicReady||!musicWidget)return;const held=musicDuckTimer>0;musicDuckTimer=.2;if(!held){try{musicWidget.setVolume(70);}catch(e){}}}
+function initMusic(){try{if(musicWidget||!window.SC||!SC.Widget||!SC.Widget.Events)return;const frame=document.getElementById('sc-player');if(!frame)return;const widget=SC.Widget(frame);musicWidget=widget;widget.bind(SC.Widget.Events.READY,()=>{musicReady=true;try{widget.setVolume(100);}catch(e){}if(musicArmed&&musicOn){try{widget.play();}catch(e){}}});widget.bind(SC.Widget.Events.FINISH,()=>{if(!musicOn||!musicArmed)return;try{widget.seekTo(0);widget.play();}catch(e){}});}catch(e){musicWidget=null;musicReady=false;}}
+window.__initMusic=initMusic;
+if(window.SC&&SC.Widget)initMusic();
 requestAnimationFrame(loop);
 </script>
 </body>
