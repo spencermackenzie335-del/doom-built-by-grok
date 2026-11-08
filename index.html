@@ -50,9 +50,9 @@ for(let ry=0;ry<4;ry++) for(let rx=0;rx<4;rx++) {
   MAP[ry*11+8][rx*11+8]='a'; MAP[ry*11+2][rx*11+8]='g';
   if((rx+ry)%2===0) MAP[ry*11+8][rx*11+2]='h';
 }
-const MW=44, MH=44;
+let MW=44, MH=44;
 const WALLCODE = { '#': 1, 'S': 2, 'T': 3, 'W': 4, 'D': 5 };
-const grid = new Uint8Array(MW * MH);
+let grid=new Uint8Array(MW*MH), floorG=new Uint8Array(MW*MH), built=new Uint8Array(MW*MH), builtHp=new Uint8Array(MW*MH), torchLight=new Uint8Array(MW*MH), baseGrid=null;
 let exitX = 0, exitY = 0;
 
 // ================= UTIL =================
@@ -88,16 +88,28 @@ function blockTex(kind) {
   if(kind==='log') {c=[104,76,39]; if(x%4===0)c=[66,46,26];}
   if(kind==='bricks') {if(y%5===0||(x+(Math.floor(y/5)%2)*8)%16===0)c=[58,62,65];}
   if(kind==='cobble') {let edge=(x*3+y*7)%13<2||y%6===0; c=edge?[60,65,68]:[124,128,126];}
+  if(kind==='stone') c=[118,120,124];
   if(kind==='diamond'||kind==='gold') {if((x*7+y*11)%19<4)c=kind==='diamond'?[48,226,222]:[242,193,43];}
   if(kind==='glow') c=(x*5+y*3)%7<2?[137,91,39]:[249,214,116];
+  if(kind==='sand') c=[196,176,110];
+  if(kind==='water'){c=[36,92,168]; if((x+y)%4===0)c=[96,168,214];}
+  if(kind==='leaves'){c=[46,120,48]; if((x*3+y*5)%7<2)c=[24,78,30];}
+  if(kind==='coal'){c=[88,90,94]; if((x*5+y*9)%13<3)c=[28,28,30];}
+  if(kind==='door'){c=[128,84,42]; if(x<2||x>13)c=[72,46,24]; if(x>6&&x<10&&y>7&&y<12)c=[40,36,32];}
+  if(kind==='chest'){c=[156,104,42]; if(y>=6&&y<=9)c=[92,62,28]; if(x>6&&x<10&&y>6&&y<10)c=[220,180,60];}
+  if(kind==='table'){c=[120,82,46]; if(y<3||x<2||x>13)c=[78,52,30];}
+  if(kind==='turret'){c=[78,86,96]; if(y>5&&y<12&&x>4&&x<12)c=[46,50,58]; if(x>6&&x<10&&y>7&&y<11)c=[220,90,40];}
   g.fillStyle=`rgb(${c.map(n=>clamp(n+v,0,255)|0).join(',')})`;g.fillRect(x,y,1,1);
  }
  return makeTex(g=>{g.imageSmoothingEnabled=false;g.drawImage(small,0,0,64,64);},0);
 }
-const BLOCKS=Object.fromEntries(['grass','dirt','stone','cobble','planks','log','bricks','diamond','gold','glow'].map(k=>[k,blockTex(k)]));
+const BLOCKS=Object.fromEntries(['grass','dirt','stone','cobble','planks','log','bricks','diamond','gold','glow','sand','water','leaves','coal','door','chest','table','turret'].map(k=>[k,blockTex(k)]));
 const texFloor=BLOCKS.cobble, texCeil=BLOCKS.bricks, texCeilLight=BLOCKS.glow;
 const texExit=makeTex(g=>{g.fillStyle='#12552e';g.fillRect(0,0,64,64);g.fillStyle='#66ff99';g.fillRect(2,2,60,3);},0);
 const WALLTEX=[null,BLOCKS.grass,BLOCKS.stone,BLOCKS.diamond,BLOCKS.planks,BLOCKS.log,BLOCKS.dirt,BLOCKS.cobble,BLOCKS.bricks,BLOCKS.gold];
+WALLTEX.push(BLOCKS.leaves,BLOCKS.coal,BLOCKS.table,BLOCKS.chest,BLOCKS.turret,BLOCKS.door);
+const FLOORTEX=[BLOCKS.grass,BLOCKS.dirt,BLOCKS.stone,BLOCKS.water,BLOCKS.sand,BLOCKS.planks];
+const MINI=['#000','#71a04e','#888','#4cddd4','#b89655','#745a30','#795732','#858680','#808c8d','#d9b44b','#2f8a38','#222','#a67c52','#c09040','#667','#8a5a30'];
 const MINICOL=['#000','#71a04e','#999','#4cddd4','#b89655','#745a30','#795732','#858680','#808c8d','#d9b44b'];
 
 // --- sprites ---
@@ -181,6 +193,7 @@ const TEX = {
     g.fillStyle = '#7a5228'; g.fillRect(14, 44, 36, 4);
     for (let i = 0; i < 5; i++) { g.fillStyle = '#c01010'; g.fillRect(17 + i * 7, 34, 5, 12); g.fillStyle = '#d4a020'; g.fillRect(17 + i * 7, 42, 5, 4); }
   }, 0),
+  torch: makeTex(g => { g.fillStyle='#6b4a28'; g.fillRect(30,36,4,22); g.fillStyle='#ffd56a'; g.fillRect(27,18,10,16); g.fillStyle='#fff6c4'; g.fillRect(30,22,4,8); }, 0),
   exitsign: makeTex(g => {
     g.fillStyle = '#444'; g.fillRect(30, 20, 4, 44);
     g.fillStyle = '#0a2a0a'; g.fillRect(8, 4, 48, 20);
@@ -264,10 +277,12 @@ function purchaseSkill(i){if(i<0||i>=12||skills[i]||skillPoints<1||(i%4!==0&&!sk
 function switchGun(i){if(!owned[i]){msg('Find '+GUNS[i].name+' in the fortress');return false;}currentGun=i;spin=0;weapon.cd=.18;weapon.recoil=.3;return true;}
 function cycleGun(d){for(let n=1;n<=6;n++){const i=(currentGun+d*n+60)%6;if(owned[i]){switchGun(i);break;}}}
 function burst(x,y,color,n=12){for(let i=0;i<n;i++){const a=rnd(0,Math.PI*2),s=rnd(.4,2.5);particles.push({x,y,z:rnd(.2,.7),vx:Math.cos(a)*s,vy:Math.sin(a)*s,vz:rnd(.3,2),life:rnd(.3,.7),color});}if(particles.length>240)particles.splice(0,particles.length-240);}
-function explosion(x,y,damage=140){burst(x,y,'#ffb848',36);burst(x,y,'#fff2ac',14);shake=.55;sfx('shot');tone('sawtooth',65,20,.45,.25);for(const e of enemies)if(!e.dead){const d=Math.hypot(e.x-x,e.y-y);if(d<3.8&&los(x,y,e.x,e.y))hurtEnemy(e,damage*(1-d/3.8));}const d=Math.hypot(player.x-x,player.y-y);if(d<2.8)damagePlayer(45*(1-d/2.8));}
+function explosion(x,y,damage=140){burst(x,y,'#ffb848',36);burst(x,y,'#fff2ac',14);shake=.55;sfx('shot');tone('sawtooth',65,20,.45,.25);for(const e of enemies)if(!e.dead){const d=Math.hypot(e.x-x,e.y-y);if(d<3.8&&los(x,y,e.x,e.y))hurtEnemy(e,damage*(1-d/3.8));}for(const v of villagers)if(v&&!v.dead){const d=Math.hypot(v.x-x,v.y-y);if(d<3.8)hurtNPC(v,damage*(1-d/3.8));}if(npc&&!npc.dead){const d=Math.hypot(npc.x-x,npc.y-y);if(d<3.8)hurtNPC(npc,damage*(1-d/3.8));}const d=Math.hypot(player.x-x,player.y-y);if(d<2.8)damagePlayer(45*(1-d/2.8));}
 function collect(it){
  if(it.type==='health'){if(player.hp>=maxHP())return false;player.hp=Math.min(maxHP(),player.hp+30);}
  else if(it.type==='gold')player.gold+=25;
+ else if(it.type==='coins')player.gold+=it.n|0;
+ else if(it.type==='block')addItem(it.id,it.n||1);
  else if(it.type==='xp')grantXP(40);
  else if(['quad','speed','invulnerable'].includes(it.type))powers[it.type]=15*(skills[10]?1.5:1);
  else if(it.type==='gun'){owned[it.gun]=true;addAmmo(GUNS[it.gun].ammo,it.gun===4?5:60);switchGun(it.gun);}
@@ -292,7 +307,9 @@ GUNS.forEach((gun,i)=>{TEX['ammo_'+gun.ammo]=makeTex(g=>{g.fillStyle='#544333';g
 TEX.arrow=makeTex(g=>{g.fillStyle='#bd9960';g.fillRect(11,31,40,3);g.fillStyle='#ddd';g.fillRect(43,27,7,10);},0);
 TEX.rocket=makeTex(g=>{g.fillStyle='#e7ad55';g.fillRect(16,26,32,11);g.fillStyle='#ff5b27';g.fillRect(8,28,12,7);},0);
 // ================= GAME STATE =================
-let state = 'title', player, enemies, items, projectiles, kills, total, time, msgText = '', msgT = 0;
+let state = 'title', mode='campaign', player, enemies, items, projectiles, kills, total, time, msgText = '', msgT = 0;
+let worldSeed=0, clock=24, rep=100, alertVillage=false, buildMode=false, saveT=6, spawnT=1.2, mineCD=0, spawnX=6.5, spawnY=6.5;
+let bag={}, hotbar=[4,5,1,3,7,8,12,16], hotSel=0, torchList=[], chestList=[], turretList=[], openDoors=new Set(), craftSel=0, chestRef=null;
 let hurtFlash = 0, pickFlash = 0, showMap = false, mouseDown = false, titleT = 0;
 const weapon = { cd: 0, flash: 0, recoil: 0, pumped: true };
 let npc = null, shopSel = 0, shopLine = '', shopLineT = 0, upg = { dmg: 0, cap: 0, rof: 0 };
@@ -319,11 +336,12 @@ for(let i=0;i<GUNS.length;i++){
  SHOP.push({name:g.name+': Damage tuning',info:()=>`+${gunUp[i]*20}% LV ${gunUp[i]}/3`,cost:()=>gunUp[i]>=3?null:45+gunUp[i]*35,buy:()=>{gunUp[i]++;}});
  SHOP.push({name:g.name+': '+g.ammo,info:()=>`${ammo[g.ammo]} in reserve`,cost:()=>ammo[g.ammo]>=ammoCap(g.ammo)?null:18,buy:()=>{addAmmo(g.ammo,i===4?4:i===3?120:40);}});
 }
-function openShop() { unlock(); state = 'shop'; shopSel = 0; shopLine = pick(LINES.greet); shopLineT = 0; mouseDown = false; for (const k in keys) keys[k] = false; sfx('door'); }
+function openShop() { if(tradeClosed()){msg('The shops are closed to you.');return;} unlock(); state = 'shop'; shopSel = 0; shopLine = pick(LINES.greet); if(mode==='sandbox'&&rep<70)shopLine='Prices are higher. The village remembers.'; shopLineT = 0; mouseDown = false; for (const k in keys) keys[k] = false; sfx('door'); }
 function closeShop() { state = 'play'; msg('Corvin: "' + pick(LINES.bye) + '"'); for (const k in keys) keys[k] = false; lockPointer(); }
 function buyItem(i) {
   const it = SHOP[i]; if (!it) return; shopSel = i;
-  const c = it.cost();
+  if(tradeClosed()){shopLine='The village will not trade with you.';sfx('click');shopLineT=0;return;}
+  const c = priced(it.cost());
   if (c === null) { shopLine = pick(LINES.max); sfx('click'); }
   else if (player.gold < c) { shopLine = pick(LINES.poor); sfx('click'); }
   else { player.gold -= c; it.buy(); shopLine = pick(LINES.buy); sfx('pick'); }
@@ -332,6 +350,8 @@ function buyItem(i) {
 const keys = {};
 
 function initLevel() {
+ if(MW!==44||grid.length!==44*44) allocWorld(44);
+ mode='campaign';
  enemies=[];items=[];projectiles=[];particles=[];npc=null;
  currentGun=0;owned=[true,true,false,false,false,false];ammo={rounds:90,shells:30,rifle:0,heavy:0,rockets:0,cells:0};gunUp=[0,0,0,0,0,0];spin=0;shake=0;dashCD=0;dashT=0;
  powers={quad:0,speed:0,invulnerable:0};level=1;xp=0;skillPoints=0;skills=Array(12).fill(false);quest={active:false,kills:0,claimed:false};
@@ -348,6 +368,7 @@ function initLevel() {
  }
  Object.defineProperty(player,'ammo',{get:()=>ammo.shells,set:v=>ammo.shells=v});
  villagers=[{x:4.5,y:7.5,role:'quest',tex:'villager1',name:'Mara'},{x:8.5,y:7.5,role:'hint',tex:'villager2',name:'Ivo'}];
+ prepActor(npc,'Corvin','dealer'); for(const v of villagers) prepActor(v,v.name,v.role);
  // Gun caches on the main connected route. All ammo types also have their own caches.
  for(let i=2;i<6;i++)items.push({type:'gun',gun:i,x:3.5+(i-2)*2,y:8.5});
  items.push({type:'gun',gun:0,x:15.5,y:8.5},{type:'gun',gun:1,x:8.5,y:15.5});
@@ -358,9 +379,7 @@ function initLevel() {
 }
 function mkEnemy(type,x,y){return {type,x,y,hp:type==='zombie'?100:type==='skeleton'?75:65,dead:false,alert:false,cd:rnd(.5,1.5),anim:0,flash:0,painT:0,atkT:0,lx:x,ly:y};}
 function msg(t) { msgText = t; msgT = 3; }
-function startGame() {
-  initAudio(); initLevel(); state = 'play'; lockPointer(); armMusic();
-}
+function startGame() { loadOrNew(); }
 function lockPointer() {
   try { const p = cv.requestPointerLock && cv.requestPointerLock(); if (p && p.catch) p.catch(() => { }); } catch (e) { }
 }
@@ -369,7 +388,10 @@ function lockPointer() {
 function solid(x, y) {
   const mx = Math.floor(x), my = Math.floor(y);
   if (mx < 0 || my < 0 || mx >= MW || my >= MH) return true;
-  return grid[my * MW + mx] !== 0;
+  const t = grid[my * MW + mx];
+  if (!t) return false;
+  if (t === 15 && openDoors.has(my * MW + mx)) return false;
+  return true;
 }
 function blocked(x, y, r) {
   if (npc && Math.abs(x - npc.x) < r + 0.3 && Math.abs(y - npc.y) < r + 0.3) return true;
@@ -423,8 +445,11 @@ function shoot(){
 function hitscan(ang) {
   const dx = Math.cos(ang), dy = Math.sin(ang);
   let bd = cast(player.x, player.y, dx, dy), best = null;
-  for (const e of enemies) {
-    if (e.dead) continue;
+  const targets=[];
+  for (const e of enemies) if(!e.dead) targets.push(e);
+  for (const v of villagers) if(v&&!v.dead) targets.push(v);
+  if(npc&&!npc.dead) targets.push(npc);
+  for (const e of targets) {
     const rx = e.x - player.x, ry = e.y - player.y;
     const along = rx * dx + ry * dy;
     if (along <= 0 || along >= bd) continue;
@@ -433,14 +458,17 @@ function hitscan(ang) {
   return best;
 }
 function hurtEnemy(e,d){
- if(e.dead)return;e.hp-=d;e.flash=.12;e.alert=true;burst(e.x,e.y,e.type==='skeleton'?'#e0d8b4':'#a93e37',10);
+ if(!e||e.dead)return;
+ if(e.kind==='npc'){hurtNPC(e,d);return;}
+ e.hp-=d;e.flash=.12;e.alert=true;burst(e.x,e.y,e.type==='skeleton'?'#e0d8b4':'#a93e37',10);
  if(e.hp<=0){e.dead=true;kills++;grantXP(e.type==='zombie'?35:45);sfx('die');if(e.type==='zombie'&&quest.active&&!quest.claimed)quest.kills++;
  const type=pick(['quad','speed','invulnerable','health','ammo','xp','gold','gold']);items.push({type,x:e.x,y:e.y});
  }else{e.painT=.13;sfx('pain');}
 }
 function useAction() {
-  for(const v of villagers)if(Math.hypot(v.x-player.x,v.y-player.y)<1.9){talkTo(v);return;}
-  if (npc) {
+  if(mode==='sandbox'){sandboxUse();return;}
+  for(const v of villagers)if(!v.dead&&Math.hypot(v.x-player.x,v.y-player.y)<1.9){talkTo(v);return;}
+  if (npc && !npc.dead) {
     const dx = npc.x - player.x, dy = npc.y - player.y, d = Math.hypot(dx, dy);
     let da = Math.atan2(dy, dx) - player.a; da = Math.atan2(Math.sin(da), Math.cos(da));
     if (d < 1.8 && Math.abs(da) < 0.7) { openShop(); return; }
@@ -459,7 +487,7 @@ function damagePlayer(d) {
   d*=skills[7]?.8:1;
   const ab = Math.min(player.armor, Math.round(d * (skills[6]?.7:.5))); player.armor -= ab; d -= ab;
   player.hp -= d; hurtFlash = Math.min(0.8, hurtFlash + 0.5); sfx('hurt');
-  if (player.hp <= 0) { player.hp = 0; state = 'dead'; sfx('death'); unlock(); beginScore(false); }
+  if (player.hp <= 0) { if(mode==='sandbox'){respawn();return;} player.hp = 0; state = 'dead'; sfx('death'); unlock(); beginScore(false); }
 }
 function unlock() { try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) { } }
 
@@ -472,6 +500,7 @@ function update(dt){
  p.a+=((keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0))*2.6*dt;
  const fwd=((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0),str=(keys.KeyD?1:0)-(keys.KeyA?1:0);
  let sp=(keys.ShiftLeft||keys.ShiftRight?5.2:3.4)*(1+(skills[8]?.15:0)+(skills[11]?.2:0))*(powers.speed>0?1.65:1)*(currentGun===3?.62:1)*(dashT>0?3.5:1)*dt;
+ if(mode==='sandbox'){const wx=p.x|0,wy=p.y|0;if(wx>=0&&wy>=0&&wx<MW&&wy<MH&&floorG[wy*MW+wx]===3)sp*=.55;}
  let mx=Math.cos(p.a)*fwd-Math.sin(p.a)*str,my=Math.sin(p.a)*fwd+Math.cos(p.a)*str;let ml=Math.hypot(mx,my);
  if(dashT>0&&!ml){mx=Math.cos(p.a);my=Math.sin(p.a);ml=1;}
  p.moving=ml>0;
@@ -484,18 +513,18 @@ function update(dt){
  if(firing)shoot();weapon.flash-=dt;weapon.recoil=Math.max(0,weapon.recoil-dt*6);
  hurtFlash=Math.max(0,hurtFlash-dt*1.2);pickFlash=Math.max(0,pickFlash-dt*2);msgT-=dt;
  for(let i=items.length-1;i>=0;i--)if(Math.hypot(items[i].x-p.x,items[i].y-p.y)<.6&&collect(items[i]))items.splice(i,1);
- if(npc&&!npc.greeted&&Math.hypot(npc.x-p.x,npc.y-p.y)<2.6){npc.greeted=true;msg(pick(LINES.near));}
+ if(npc&&!npc.dead&&!npc.greeted&&Math.hypot(npc.x-p.x,npc.y-p.y)<2.6){npc.greeted=true;msg(pick(LINES.near));}
  for(const e of enemies){
   if(e.dead)continue;e.flash-=dt;e.cd-=dt;e.atkT-=dt;e.anim+=dt*5;
   const dx=p.x-e.x,dy=p.y-e.y,d=Math.hypot(dx,dy),see=d<19&&los(e.x,e.y,p.x,p.y);
   // Sanctuary is genuinely safe; monsters never enter or attack it.
-  if(p.x<10.7&&p.y<10.7){e.alert=false;continue;}
+  if(mode!=='sandbox'&&p.x<10.7&&p.y<10.7){e.alert=false;continue;}
   if(see){e.alert=true;e.lx=p.x;e.ly=p.y;}if(!e.alert)continue;
   if(e.painT>0){e.painT-=dt;continue;}
   if(e.type==='exploder'&&d<1.5){e.atkT=.4;e.fuse=(e.fuse||0)+dt;if(e.fuse>.65){hurtEnemy(e,9999);explosion(e.x,e.y,80);}continue;}
   if(d<.9){if(e.cd<=0){e.cd=.95;e.atkT=.25;damagePlayer(12);sfx('claw');}}
   else if(e.type==='skeleton'&&see&&d<13&&e.cd<=0){e.cd=2;e.atkT=.3;projectiles.push({x:e.x+dx/d*.4,y:e.y+dy/d*.4,vx:dx/d*7,vy:dy/d*7,life:4});tone('triangle',550,200,.12,.1);}
-  else if(e.type!=='skeleton'||!see||d>8){if(d>.1){let step=(e.type==='exploder'?3.2:1.6)*dt;let nx=e.x+dx/d*step,ny=e.y+dy/d*step;if(!(nx<10.8&&ny<10.8))moveEnt(e,dx/d*step,dy/d*step,.28);}}
+  else if(e.type!=='skeleton'||!see||d>8){if(d>.1){let step=(e.type==='exploder'?3.2:1.6)*dt;let nx=e.x+dx/d*step,ny=e.y+dy/d*step;if(mode==='sandbox'||!(nx<10.8&&ny<10.8))moveEnt(e,dx/d*step,dy/d*step,.28);}}
  }
  for(let i=projectiles.length-1;i>=0;i--){const f=projectiles[i];let hit=false;const steps=Math.max(1,Math.ceil(Math.hypot(f.vx,f.vy)*dt/.12));
   for(let n=0;n<steps;n++){f.x+=f.vx*dt/steps;f.y+=f.vy*dt/steps;
@@ -505,11 +534,13 @@ function update(dt){
   f.life-=dt;if(hit||f.life<=0){if(f.rocket)explosion(f.x,f.y,f.damage);else if(hit&&Math.hypot(f.x-p.x,f.y-p.y)<.5)damagePlayer(14);projectiles.splice(i,1);}
  }
  for(let i=particles.length-1;i>=0;i--){const q=particles[i];q.life-=dt;q.x+=q.vx*dt;q.y+=q.vy*dt;q.z+=q.vz*dt;q.vz-=dt*6;if(q.life<=0)particles.splice(i,1);}
- if(state==='play'&&(kills===total||(Math.floor(p.x)===exitX&&Math.floor(p.y)===exitY))){state='win';sfx('win');unlock();beginScore(true);}
+ sandboxTick(dt);
+ if(mode!=='sandbox'&&state==='play'&&(kills===total||(Math.floor(p.x)===exitX&&Math.floor(p.y)===exitY))){state='win';sfx('win');unlock();beginScore(true);}
 }
 
 // ================= RENDER =================
 function render(cam) {
+  const amb=mode==='sandbox'?dayShade():1;
   const dirX = Math.cos(cam.a), dirY = Math.sin(cam.a);
   const plX = -dirY * PLANE, plY = dirX * PLANE;
   // floor & ceiling
@@ -523,11 +554,16 @@ function render(cam) {
     for (let x = 0; x < W; x++) {
       const cx = Math.floor(fx), cy = Math.floor(fy);
       const ti = (((fy - cy) * TS) & 63) * TS + (((fx - cx) * TS) & 63);
-      let c = (cx === exitX && cy === exitY) ? texExit[ti] : (cx<11&&cy<11?BLOCKS.planks:((Math.floor(cx/11)+Math.floor(cy/11))%3===0?BLOCKS.dirt:texFloor))[ti];
-      buf[fRow + x] = 0xff000000 | (((c >> 16 & 255) * s) << 16) | (((c >> 8 & 255) * s) << 8) | ((c & 255) * s);
+      let c, s2=s*amb;
+      if(mode==='sandbox'){
+        let ft=3;
+        if(cx>=0&&cy>=0&&cx<MW&&cy<MH){ft=floorG[cy*MW+cx];s2=Math.min(1.2,s*(ft===2?amb*0.4:amb)+torchLight[cy*MW+cx]/255);}
+        c=(FLOORTEX[ft]||BLOCKS.dirt)[ti];
+      }else c=(cx===exitX&&cy===exitY)?texExit[ti]:(cx<11&&cy<11?BLOCKS.planks:((Math.floor(cx/11)+Math.floor(cy/11))%3===0?BLOCKS.dirt:texFloor))[ti];
+      buf[fRow + x] = 0xff000000 | (((c >> 16 & 255) * s2) << 16) | (((c >> 8 & 255) * s2) << 8) | ((c & 255) * s2);
       const lit=((cx * 7 + cy * 3) % 5 === 0);
       c = lit ? texCeilLight[ti] : texCeil[ti];
-      const cs=lit?Math.max(.65,s):s;
+      const cs=(lit?Math.max(.65,s):s)*amb;
       buf[cRow + x] = 0xff000000 | (((c >> 16 & 255) * cs) << 16) | (((c >> 8 & 255) * cs) << 8) | ((c & 255) * cs);
       fx += stx; fy += sty;
     }
@@ -544,7 +580,7 @@ function render(cam) {
     let tx = (wx * TS) | 0;
     if ((rSide === 0 && rdx > 0) || (rSide === 1 && rdy < 0)) tx = 63 - tx;
     const tex = WALLTEX[rTile];
-    const s = clamp(1.2 - perp / 11, 0.07, 1) * (rSide ? 0.72 : 1);
+    const s = clamp(1.2 - perp / 11, 0.07, 1) * (rSide ? 0.72 : 1) * amb;
     const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(VH, Math.ceil(top + lh));
     const step = TS / lh;
     let tp = (y0 - top) * step;
@@ -561,11 +597,12 @@ function render(cam) {
     const f = e.dead ? 3 : (e.atkT > 0 ? 2 : (Math.floor(e.anim) & 1));
     list.push({ x: e.x, y: e.y, tex: t[f], sc: e.type === 'exploder' ? .78 : .9, flash: !e.dead && e.flash > 0 });
   }
-  for (const it of items) list.push({ x: it.x, y: it.y, tex: it.type==='gun'?TEX['gun'+it.gun]:it.ammo?TEX['ammo_'+it.ammo]:TEX[it.type], sc: 0.5, bright:['quad','speed','invulnerable','xp'].includes(it.type) });
+  for (const it of items) list.push({ x: it.x, y: it.y, tex: itemTex(it), sc: 0.5, bright:['quad','speed','invulnerable','xp'].includes(it.type) });
   for (const f of projectiles) list.push({ x: f.x, y: f.y, tex: f.rocket?TEX.rocket:TEX.arrow, sc: f.rocket?.3:.23, mid: true, bright: true });
-  list.push({ x: exitX + 0.5, y: exitY + 0.5, tex: TEX.exitsign, sc: 0.75, bright: true });
-  if (npc) list.push({ x: npc.x, y: npc.y, tex: TEX.dealer[state === 'shop' && (Math.floor(titleT * 3) & 1) ? 1 : 0], sc: 0.95, glow: true });
-  for(const v of villagers)list.push({x:v.x,y:v.y,tex:TEX[v.tex],sc:.9});
+  if(mode!=='sandbox') list.push({ x: exitX + 0.5, y: exitY + 0.5, tex: TEX.exitsign, sc: 0.75, bright: true });
+  for(const t of torchList) list.push({x:t.x+.5,y:t.y+.5,tex:TEX.torch,sc:.42,bright:true});
+  if (npc&&!npc.dead) list.push({ x: npc.x, y: npc.y, tex: TEX.dealer[state === 'shop' && (Math.floor(titleT * 3) & 1) ? 1 : 0], sc: 0.95, glow: true, flash:npc.flash>0 });
+  for(const v of villagers) if(!v.dead) list.push({x:v.x,y:v.y,tex:TEX[v.tex],sc:.9,flash:v.flash>0});
   for (const s of list) { const rx = s.x - cam.x, ry = s.y - cam.y; s.depth = rx * dirX + ry * dirY; s.lat = -rx * dirY + ry * dirX; }
   list.sort((a, b) => b.depth - a.depth);
   for (const s of list) {
@@ -577,7 +614,7 @@ function render(cam) {
     const x0 = Math.max(0, Math.ceil(left)), x1 = Math.min(W, Math.ceil(left + size));
     const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(VH, Math.ceil(top + size));
     if (x0 >= x1 || y0 >= y1) continue;
-    const sh = s.bright ? 1 : clamp(1.2 - s.depth / 11, 0.08, 1);
+    const sh = s.bright ? 1 : clamp(1.2 - s.depth / 11, 0.08, 1) * amb;
     const tex = s.tex, inv = TS / size;
     for (let x = x0; x < x1; x++) {
       if (s.depth >= zbuf[x]) continue;
@@ -699,13 +736,17 @@ function drawHUD(){
  ctx.fillStyle='#f28d7c';ctx.fillText('HP '+Math.ceil(p.hp)+'/'+maxHP(),238,VH+22);ctx.fillStyle='#75c9eb';ctx.fillText('ARM '+Math.round(p.armor),372,VH+22);ctx.fillStyle='#f1cf77';ctx.fillText('G '+p.gold,510,VH+22);
  ctx.font='10px monospace';GUNS.forEach((gun,i)=>{ctx.fillStyle=i===currentGun?'#ffdf84':owned[i]?'#ccd7cf':'#66747d';ctx.fillText((i+1)+':'+gun.ammo+' '+ammo[gun.ammo],10+i*105,VH+39);});
  ctx.fillStyle='#31414c';ctx.fillRect(10,VH+48,235,8);ctx.fillStyle='#7ed3a0';ctx.fillRect(10,VH+48,235*xp/(level*90),8);
- ctx.font='10px monospace';ctx.fillStyle='#b4dbc8';ctx.fillText('LV '+level+' • XP '+xp+'/'+level*90+' • K: '+skillPoints+' SP',258,VH+55);ctx.fillStyle='#d0d4cd';ctx.fillText(kills+'/'+total+'   '+time.toFixed(1)+'s',518,VH+55);
- ctx.fillStyle='rgba(8,19,25,.78)';ctx.fillRect(7,27,300,quest.active?40:24);ctx.font='10px monospace';ctx.fillStyle='#d4ddcc';ctx.fillText('BLOCKFALL / FORTRESS 01   •   K skills',14,42);
+ ctx.font='10px monospace';ctx.fillStyle='#b4dbc8';ctx.fillText('LV '+level+' • XP '+xp+'/'+level*90+' • K: '+skillPoints+' SP',258,VH+55);ctx.fillStyle='#d0d4cd';ctx.fillText(mode==='sandbox'?dayName()+'  REP '+rep:kills+'/'+total+'   '+time.toFixed(1)+'s',500,VH+55);
+ const banner=mode==='sandbox'?('SANDBOX  '+dayName()+'  REP '+rep+'  '+(buildMode?'BUILD':'GUNS')):'BLOCKFALL / FORTRESS 01   •   K skills';
+ ctx.fillStyle='rgba(8,19,25,.78)';ctx.fillRect(7,27,mode==='sandbox'?430:300,quest.active?40:24);ctx.font='10px monospace';ctx.fillStyle='#d4ddcc';ctx.fillText(banner,14,42);
+ if(mode==='sandbox'){ctx.font='10px monospace';for(let i=0;i<8;i++){const id=hotbar[i]|0;ctx.fillStyle=buildMode&&i===hotSel?'#ffdf84':'#d5ddd4';ctx.fillText((i+1)+' '+(id?INAME[id].slice(0,5):'-')+' '+(id?(bag[id]|0):''),8+i*78,68);}}
  if(quest.active){ctx.fillStyle='#ffd786';ctx.fillText('WARDEN: Zombies '+Math.min(10,quest.kills)+'/10'+(quest.claimed?' • rewarded':quest.kills>=10?' • return to Mara':''),14,58);}
  let y=79;for(const k in powers)if(powers[k]>0){ctx.fillStyle=k==='quad'?'#dba1ff':k==='speed'?'#70ffb3':'#ffe39a';ctx.fillText(k.toUpperCase()+' '+powers[k].toFixed(1)+'s',14,y);y+=14;}
  if(currentGun===3){ctx.fillStyle='#899da5';ctx.fillRect(260,310,120,5);ctx.fillStyle='#ffd378';ctx.fillRect(260,310,120*spin,5);ctx.fillText('SPIN '+Math.round(spin*100)+'%',280,304);}
  if(state==='play'){
-  const v=villagers.find(v=>Math.hypot(v.x-p.x,v.y-p.y)<1.9);let label=v?'E • Talk to '+v.name:npc&&Math.hypot(npc.x-p.x,npc.y-p.y)<1.8?'E • Trade with Corvin':'';
+  const v=villagers.find(v=>!v.dead&&Math.hypot(v.x-p.x,v.y-p.y)<1.9);
+  let label=mode==='sandbox'&&buildMode?'LMB place  RMB mine  C craft':v?'E • Talk to '+v.name:(npc&&!npc.dead&&Math.hypot(npc.x-p.x,npc.y-p.y)<1.8?'E • Trade with Corvin':'');
+  if(mode==='sandbox'&&nearestNPC()) label=(label?label+'   ':'')+'F pickpocket';
   if(label){ctx.textAlign='center';ctx.font='bold 13px monospace';ctx.fillStyle='#ffe4a5';ctx.fillText(label,320,285);}
   if(skills[9]){ctx.textAlign='right';ctx.font='10px monospace';ctx.fillStyle='#8ceac4';ctx.fillText('Q DASH '+(dashCD>0?dashCD.toFixed(1)+'s':'READY'),630,80);}
  }
@@ -716,6 +757,7 @@ function drawCrosshair() {
   ctx.fillRect(W / 2 - 7, HALF - 1, 5, 2); ctx.fillRect(W / 2 + 2, HALF - 1, 5, 2);
 }
 function drawMinimap() {
+  if(mode==='sandbox'){drawLocalMap();return;}
   const s = 6, ox = W - MW * s - 8, oy = 8;
   ctx.globalAlpha = 0.75; ctx.fillStyle = '#000'; ctx.fillRect(ox - 2, oy - 2, MW * s + 4, MH * s + 4);
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
@@ -743,11 +785,12 @@ function drawTitle() {
   g.addColorStop(0, '#ffd040'); g.addColorStop(0.5, '#e04010'); g.addColorStop(1, '#600');
   ctx.fillStyle = '#000'; ctx.fillText('DOOM', W / 2 + 4, 124);
   ctx.fillStyle = g; ctx.fillText('DOOM', W / 2, 120);
-  centerText('BLOCKFALL • ORIGINAL PIXEL FORTRESS', 150, 20, '#ccc');
-  ctx.font = '14px monospace'; ctx.fillStyle = '#ddd'; ctx.textAlign = 'center';
-  const lines=['WASD move • SHIFT run • MOUSE / ARROWS aim', 'CLICK / SPACE fire • 1–6 / WHEEL switch guns', 'E talk / trade • K / TAB skill tree • Q dash', 'M map • L leaderboard • N music • R restart', 'Find Corvin and the Warden in the sanctuary.', '60 monsters. One fortress. Reach the green EXIT.'];
-  lines.forEach((l, i) => ctx.fillText(l, W / 2, 186 + i * 21));
-  if (Math.floor(titleT * 2) % 2 === 0) centerText('PRESS ENTER OR CLICK TO START', 340, 24, '#ff3020');
+  centerText('SANDBOX WORLD  •  CAMPAIGN FORTRESS', 150, 18, '#ccc');
+  ctx.font = '13px monospace'; ctx.fillStyle = '#ddd'; ctx.textAlign = 'center';
+  const saved=worldSaved();
+  const lines=['ENTER / CLICK  '+(saved?'loads your sandbox world':'starts a new sandbox world'),'U new world    C campaign fortress    L leaderboard    N music','Right click mines. B build mode. C crafts. F pickpockets.','Night and caves spawn enemies. Walls and turrets defend.','Campaign keeps the timed fortress clear and the global board.'];
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, 182 + i * 18));
+  if (Math.floor(titleT * 2) % 2 === 0) centerText(saved?'LOAD SANDBOX':'NEW SANDBOX', 330, 22, '#ff3020');
 }
 function wrapText(t, x, y, maxW, lh) {
   const words = t.split(' '); let line = '';
@@ -772,14 +815,14 @@ function drawShop() {
   ctx.fillText(`ARMOR ${player.armor}/100   HEALTH ${Math.ceil(player.hp)}%`, 182, 156);
   const first=Math.floor(shopSel/5)*5;
   for (let i = first; i < Math.min(first+5,SHOP.length); i++) {
-    const it = SHOP[i], c = it.cost(), y = 178 + (i-first) * 24;
+    const it = SHOP[i], c = tradeClosed()?null:priced(it.cost()), y = 178 + (i-first) * 24;
     if (i === shopSel) { ctx.fillStyle = '#3e3020'; ctx.fillRect(30, y - 15, 580, 22); ctx.fillStyle = '#e0a040'; ctx.fillRect(30, y - 15, 3, 22); }
     ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left';
     ctx.fillStyle = c === null ? '#777' : '#eee'; ctx.fillText(`${i===shopSel?">":" "} ${it.name}`, 40, y);
     ctx.font = '12px monospace'; ctx.fillStyle = '#9ab0d0'; ctx.fillText(it.info(), 320, y);
     ctx.textAlign = 'right'; ctx.font = 'bold 13px monospace';
     ctx.fillStyle = c === null ? '#40c060' : player.gold >= c ? '#ffd84a' : '#a04030';
-    ctx.fillText(c === null ? 'MAX' : c + 'g', 600, y);
+    ctx.fillText(tradeClosed()?'CLOSED':c === null ? 'MAX' : c + 'g', 600, y);
   }
   ctx.textAlign = 'center'; ctx.font = '12px monospace'; ctx.fillStyle = '#b0a080';
   ctx.fillText('W/S select (all pages) • ENTER buy • E/ESC leave', W / 2, 314);
@@ -844,10 +887,90 @@ function loop(now) {
     if (state === 'shop') drawShop();
     if(state==='skills')drawSkills();
     if(state==='dialogue')drawDialogue();
+    if(state==='craft')drawCraft();
+    if(state==='chest')drawChest();
+    if(state==='pause')drawPause();
   }
   if(state==='leaderboard')drawLeaderboard();
   requestAnimationFrame(loop);
 }
+
+// ================= SANDBOX WORLD =================
+const WORLD=192;
+const INAME=['','Grass','Dirt','Stone','Log','Planks','Sticks','Cobble','Wall','Door','Table','Chest','Torch','Coal','Gold','Diamond','Turret'];
+const TDROP={1:1,2:3,3:15,4:5,5:4,6:2,7:7,8:8,9:14,10:6,11:13,12:10,13:11,14:16,15:9};
+const TPLACE={1:1,2:6,3:2,4:5,5:4,7:7,8:8,9:15,10:12,11:13,16:14};
+const RECIPES=[
+ {name:'Planks',out:5,n:4,need:[[4,1]],table:false},
+ {name:'Sticks',out:6,n:2,need:[[5,1]],table:false},
+ {name:'Table',out:10,n:1,need:[[5,4]],table:false},
+ {name:'Wall',out:8,n:4,need:[[7,4]],table:true},
+ {name:'Door',out:9,n:1,need:[[5,6]],table:true},
+ {name:'Chest',out:11,n:1,need:[[5,8]],table:true},
+ {name:'Torch',out:12,n:4,need:[[6,1],[13,1]],table:true},
+ {name:'Turret',out:16,n:1,need:[[7,6],[14,2],[15,1]],table:true}
+];
+function h32(x,y,s){let n=Math.imul(x|0,374761393)^Math.imul(y|0,668265263)^Math.imul(s|0,1442695041);n=Math.imul(n^(n>>>13),1274126177);return (n^(n>>>16))>>>0;}
+function fade(t){return t*t*(3-2*t);}
+function vn(x,y,seed){const x0=Math.floor(x),y0=Math.floor(y),fx=x-x0,fy=y-y0,u=fade(fx),v=fade(fy);const n=(a,b)=>h32(a,b,seed)/4294967296;const n00=n(x0,y0),n10=n(x0+1,y0),n01=n(x0,y0+1),n11=n(x0+1,y0+1);return n00*(1-u)*(1-v)+n10*u*(1-v)+n01*(1-u)*v+n11*u*v;}
+function elev(x,y){return vn(x/16,y/16,worldSeed)*0.62+vn(x/6,y/6,worldSeed+11)*0.38;}
+function allocWorld(n){MW=MH=n;grid=new Uint8Array(n*n);floorG=new Uint8Array(n*n);built=new Uint8Array(n*n);builtHp=new Uint8Array(n*n);torchLight=new Uint8Array(n*n);}
+function dayShade(){if(mode!=='sandbox')return 1;const t=(clock%120)/120,sun=Math.cos((t-0.25)*Math.PI*2);return clamp(0.2+0.8*(sun*0.5+0.5),0.2,1);}
+function dayName(){const s=dayShade();return s>0.72?'DAY':s>0.45?'DUSK':'NIGHT';}
+function tileAt(x,y){x|=0;y|=0;if(x<0||y<0||x>=MW||y>=MH)return 1;return grid[y*MW+x];}
+function addRep(n){rep=clamp((rep|0)+n,0,100)|0;}
+function tradeClosed(){return mode==='sandbox'&&(alertVillage||rep<40);}
+function addItem(id,n){id|=0;n|=0;if(!id||!n)return;bag[id]=Math.max(0,(bag[id]|0)+n);if(!bag[id])delete bag[id];if(n>0)rememberHot(id);}
+function rememberHot(id){if(hotbar.includes(id))return;const i=hotbar.indexOf(0);if(i>=0)hotbar[i]=id;}
+function prepActor(v,name,role){if(!v)return;v.kind='npc';v.name=name||v.name||'Villager';v.role=role||v.role||'hint';if(v.hp==null)v.hp=v.role==='dealer'?90:v.role==='guard'?70:50;if(v.gold==null)v.gold=v.role==='dealer'?48:v.role==='guard'?18:16;v.a=v.a||0;v.dead=!!v.dead;v.hostile=!!v.hostile;v.inv=v.inv||[{id:5,n:2}];}
+function aimCell(){for(const dist of [1.05,1.6]){const x=Math.floor(player.x+Math.cos(player.a)*dist),y=Math.floor(player.y+Math.sin(player.a)*dist);if(x!==(player.x|0)||y!==(player.y|0))return {x,y};}return null;}
+function occupied(x,y){if(Math.abs(player.x-(x+.5))<.45&&Math.abs(player.y-(y+.5))<.45)return true;if(npc&&!npc.dead&&(npc.x|0)===x&&(npc.y|0)===y)return true;return villagers.some(v=>!v.dead&&(v.x|0)===x&&(v.y|0)===y);}
+function chestAt(x,y){return chestList.find(c=>c.x===x&&c.y===y);}
+function bakeTorches(){torchLight.fill(0);for(const t of torchList){for(let y=-6;y<=6;y++)for(let x=-6;x<=6;x++){const d=Math.hypot(x,y);if(d>6)continue;const ix=t.x+x,iy=t.y+y;if(ix<0||iy<0||ix>=MW||iy>=MH)continue;const i=iy*MW+ix,v=(1-d/6)*220|0;if(v>torchLight[i])torchLight[i]=v;}}}
+function refreshTurrets(){turretList=[];for(let i=0;i<grid.length;i++)if(grid[i]===14)turretList.push({x:(i%MW)+.5,y:(i/MW|0)+.5,cd:0});}
+function spillChest(ch){if(!ch||ch.spilled)return;ch.spilled=1;if(ch.gold)items.push({type:'coins',n:ch.gold,x:ch.x+.5,y:ch.y+.5});for(const it of ch.loot||[])items.push({type:'block',id:it.id,n:it.n||1,x:ch.x+.5,y:ch.y+.5});ch.loot=[];ch.gold=0;}
+function punishChest(ch){if(!ch||!ch.village||ch.punished)return;ch.punished=1;addRep(-12);alertVillage=true;for(const v of villagers)if(!v.dead)v.hostile=true;if(npc&&!npc.dead)npc.hostile=true;msg('The village saw the theft. REP '+rep);}
+function takeChest(){const ch=chestRef;if(!ch)return;if(ch.village)punishChest(ch);if(ch.gold){player.gold+=ch.gold|0;ch.gold=0;}for(const it of ch.loot||[])addItem(it.id,it.n||1);ch.loot=[];ch.taken=1;ch.spilled=1;msg('Chest emptied.');state='play';lockPointer();}
+function nearTable(){const x=player.x|0,y=player.y|0;for(let yy=-2;yy<=2;yy++)for(let xx=-2;xx<=2;xx++){const tx=x+xx,ty=y+yy;if(tx<0||ty<0||tx>=MW||ty>=MH)continue;if(grid[ty*MW+tx]===12)return true;}return false;}
+function canCraft(r){if(!r)return false;if(r.table&&!nearTable())return false;return r.need.every(([id,n])=>(bag[id]|0)>=n);}
+function doCraft(i){const r=RECIPES[i];if(!r)return false;if(r.table&&!nearTable()){msg('Set down a crafting table first.');return false;}if(!canCraft(r)){msg('Missing materials.');return false;}for(const [id,n] of r.need)addItem(id,-n);addItem(r.out,r.n);sfx('pick');msg('Crafted '+INAME[r.out]+'.');return true;}
+function mineCell(x,y){if(mode!=='sandbox'||mineCD>0)return false;x|=0;y|=0;if(x<1||y<1||x>=MW-1||y>=MH-1){msg('The world edge holds.');return false;}const ti=torchList.findIndex(t=>t.x===x&&t.y===y);if(ti>=0&&!grid[y*MW+x]){torchList.splice(ti,1);addItem(12,1);bakeTorches();mineCD=.18;sfx('click');return true;}const t=grid[y*MW+x];if(!t){msg('Nothing to mine.');return false;}if(t===13){const ch=chestAt(x,y);if(ch){if(ch.village)punishChest(ch);spillChest(ch);chestList=chestList.filter(c=>c!==ch);}}const drop=TDROP[t]||0;grid[y*MW+x]=0;built[y*MW+x]=0;builtHp[y*MW+x]=0;if(t===15)openDoors.delete(y*MW+x);if(drop)addItem(drop,1);if(t===14)refreshTurrets();mineCD=.18;sfx('click');burst(x+.5,y+.5,'#c8b090',6);return true;}
+function mineBlock(){const c=aimCell();if(!c){msg('Face a block.');return false;}return mineCell(c.x,c.y);}
+function placeCell(x,y){if(mode!=='sandbox')return false;x|=0;y|=0;const id=hotbar[hotSel]|0;if(!id||!(bag[id]>0)){msg('Empty slot. Press B, then 1-8.');return false;}if(x<1||y<1||x>=MW-1||y>=MH-1)return false;if(occupied(x,y)){msg('Something is in the way.');return false;}if(id===12){if(torchList.some(t=>t.x===x&&t.y===y)){msg('A torch is already there.');return false;}if(torchList.length>=80){msg('Too many torches.');return false;}torchList.push({x,y});addItem(12,-1);bakeTorches();sfx('pick');return true;}const tile=TPLACE[id];if(!tile){msg(INAME[id]+' cannot be placed.');return false;}const i=y*MW+x;if(grid[i]){msg('A block is already there.');return false;}grid[i]=tile;built[i]=1;builtHp[i]=tile===14?160:tile===15?70:100;addItem(id,-1);if(tile===13)chestList.push({x,y,loot:[],village:0,taken:0,gold:0,spilled:0,punished:0});if(tile===14)refreshTurrets();sfx('pick');return true;}
+function placeBlock(){const c=aimCell();if(!c)return false;return placeCell(c.x,c.y);}
+function facingYou(v){let a=Math.atan2(player.y-v.y,player.x-v.x)-(v.a||0);a=Math.atan2(Math.sin(a),Math.cos(a));return Math.abs(a)<1.05;}
+function nearestNPC(){let best=null,bd=1.75;const list=villagers.filter(v=>v&&!v.dead);if(npc&&!npc.dead)list.push(npc);for(const v of list){const d=Math.hypot(v.x-player.x,v.y-player.y);if(d<bd){bd=d;best=v;}}return best;}
+function trySteal(){const v=nearestNPC();if(!v){msg('Nobody close enough to pickpocket.');return false;}let chance=0.26+Math.min(.34,level*.025)+(skills[8]?.12:0)+(skills[11]?.08:0);if(facingYou(v))chance*=.2;if(Math.random()<chance){if((v.gold||0)>=8){v.gold-=8;player.gold+=8;msg('Lifted 8 gold from '+v.name+'.');}else if(v.inv&&v.inv.length){const it=v.inv.pop();addItem(it.id,it.n||1);msg('Stole '+INAME[it.id]+' from '+v.name+'.');}else msg(v.name+' has nothing left.');sfx('pick');return true;}addRep(-15);v.hostile=true;msg(v.name+' catches your hand. REP '+rep+'.');sfx('click');return false;}
+function killNPC(v){v.dead=true;v.hostile=true;if(v.gold)items.push({type:'coins',n:v.gold,x:v.x,y:v.y});for(const it of v.inv||[])items.push({type:'block',id:it.id,n:it.n||1,x:v.x+(Math.random()-.5)*.3,y:v.y+(Math.random()-.5)*.3});addRep(v.role==='dealer'?-40:-25);alertVillage=true;for(const o of villagers)if(o!==v&&!o.dead)o.hostile=true;if(npc&&npc!==v&&!npc.dead)npc.hostile=true;msg((v.name||'They')+' fell. The others turn on you. REP '+rep);sfx('die');}
+function hurtNPC(v,d){if(!v||v.dead)return;v.hp-=d;v.flash=.16;v.hostile=true;burst(v.x,v.y,'#e8c8a0',8);if(v.hp<=0)killNPC(v);else sfx('pain');}
+function priced(c){if(c==null)return null;if(mode==='sandbox'&&rep<70)return Math.ceil(c*1.5);return c;}
+function cycleHot(d){hotSel=(hotSel+d+80)%8;}
+function itemTex(it){if(!it)return TEX.gold;if(it.type==='gun')return TEX['gun'+it.gun]||TEX.gold;if(it.type==='ammo'||it.ammo)return TEX['ammo_'+(it.ammo||'rounds')]||TEX.ammo;if(it.type==='coins'||it.type==='gold')return TEX.gold;if(it.type==='block'){const tile=TPLACE[it.id];if(tile&&WALLTEX[tile])return WALLTEX[tile];if(it.id===13)return BLOCKS.coal;if(it.id===14||it.id===9)return BLOCKS.gold;if(it.id===15)return BLOCKS.diamond;return BLOCKS.planks;}return TEX[it.type]||TEX.gold;}
+function updateNPCs(dt){const list=villagers.slice();if(npc)list.push(npc);for(const v of list){if(!v||v.dead)continue;v.flash=Math.max(0,(v.flash||0)-dt);if(v.role==='guard'&&rep<35)v.hostile=true;v.cd=(v.cd||0)-dt;if(v.hostile){const dx=player.x-v.x,dy=player.y-v.y,d=Math.hypot(dx,dy)||1;v.a=Math.atan2(dy,dx);if(d>0.95&&d<16)moveEnt(v,dx/d*1.7*dt,dy/d*1.7*dt,.28);if(d<1.05&&v.cd<=0){v.cd=1;damagePlayer(v.role==='guard'?14:8);sfx('claw');}}else v.a=(v.a||0)+dt*.25;}}
+function updateTurrets(dt){for(const t of turretList){t.cd-=dt;if(t.cd>0)continue;let best=null,bd=8.5;for(const e of enemies){if(e.dead)continue;const d=Math.hypot(e.x-t.x,e.y-t.y);if(d<bd&&los(t.x,t.y,e.x,e.y)){bd=d;best=e;}}if(best){t.cd=.9;hurtEnemy(best,14);burst(t.x,t.y,'#ffd080',3);}}}
+function biteWalls(dt){for(const e of enemies){if(e.dead)continue;const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1;const x=Math.floor(e.x+dx/d*.85),y=Math.floor(e.y+dy/d*.85);if(x<0||y<0||x>=MW||y>=MH)continue;const i=y*MW+x;if(!built[i]||!grid[i])continue;builtHp[i]=Math.max(0,(builtHp[i]||1)-22*dt);if(builtHp[i]<=0){if(grid[i]===13)chestList=chestList.filter(c=>c.x!==x||c.y!==y);if(grid[i]===15)openDoors.delete(i);grid[i]=0;built[i]=0;if(grid[i]===14){} refreshTurrets();msg('They broke a piece of your base.');}}}
+function trySpawn(){if(mode!=='sandbox'||state!=='play')return;const alive=enemies.reduce((n,e)=>n+(!e.dead),0);const night=dayShade()<0.45,cave=(()=>{const x=player.x|0,y=player.y|0;return x>=0&&y>=0&&x<MW&&y<MH&&floorG[y*MW+x]===2;})();const cap=cave?10:night?8:2;if(alive>=cap)return;if(!night&&!cave&&Math.random()>.35)return;const ang=Math.random()*6.2832,dist=9+Math.random()*7;const x=player.x+Math.cos(ang)*dist,y=player.y+Math.sin(ang)*dist;if(x<2||y<2||x>=MW-2||y>=MH-2||solid(x,y))return;const ft=floorG[(y|0)*MW+(x|0)];if(ft===3)return;if(!cave&&Math.hypot(x-spawnX,y-spawnY)<14)return;const type=cave&&Math.random()<.45?'skeleton':Math.random()<.18?'exploder':'zombie';const e=mkEnemy(type,x,y);e.alert=true;enemies.push(e);}
+function sandboxTick(dt){if(mode!=='sandbox')return;clock+=dt;mineCD=Math.max(0,mineCD-dt);saveT-=dt;if(saveT<=0){saveT=8;saveWorld();}spawnT-=dt;if(spawnT<=0){spawnT=1.15;trySpawn();}updateNPCs(dt);updateTurrets(dt);biteWalls(dt);if(enemies.length>28)enemies=enemies.filter(e=>!e.dead||Math.hypot(e.x-player.x,e.y-player.y)<18);}
+function sandboxUse(){for(const v of villagers)if(!v.dead&&Math.hypot(v.x-player.x,v.y-player.y)<1.9){if(v.hostile){msg(v.name+' will not talk.');return;}talkTo(v);return;}if(npc&&!npc.dead&&Math.hypot(npc.x-player.x,npc.y-player.y)<1.8){if(npc.hostile||tradeClosed()){msg('Corvin will not trade with you.');return;}openShop();return;}const cell=aimCell();if(!cell){sfx('click');return;}const t=tileAt(cell.x,cell.y),i=cell.y*MW+cell.x;if(t===15){if(openDoors.has(i))openDoors.delete(i);else openDoors.add(i);sfx('door');msg(openDoors.has(i)?'Door open':'Door shut');return;}if(t===13){const ch=chestAt(cell.x,cell.y);if(ch){chestRef=ch;state='chest';unlock();mouseDown=false;for(const k in keys)keys[k]=false;return;}}if(t===12){state='craft';craftSel=0;unlock();mouseDown=false;for(const k in keys)keys[k]=false;return;}sfx('click');}
+function clearDisc(cx,cy,r){for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++){if(x*x+y*y>r*r)continue;const xx=cx+x,yy=cy+y;if(xx<2||yy<2||xx>=MW-2||yy>=MH-2)continue;floorG[yy*MW+xx]=0;grid[yy*MW+xx]=0;}}
+function house(x,y,loot){const w=7,h=6;for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const xx2=x+xx,yy2=y+yy;if(xx2<2||yy2<2||xx2>=MW-2||yy2>=MH-2)continue;floorG[yy2*MW+xx2]=5;grid[yy2*MW+xx2]=(xx===0||yy===0||xx===w-1||yy===h-1)?4:0;}const dx=x+3,dy=y+h-1;if(dx>1&&dy>1&&dx<MW-1&&dy<MH-1)grid[dy*MW+dx]=15;const cx=x+2,cy=y+2;if(cx>1&&cy>1){grid[cy*MW+cx]=13;chestList.push({x:cx,y:cy,loot:loot,village:1,taken:0,gold:22,spilled:0,punished:0});}const tx=x+4,ty=y+2;if(tx>1&&ty>1&&tx<MW-1)grid[ty*MW+tx]=12;torchList.push({x:x+1,y:y+h});}
+function placeVillage(cx,cy,kind){clearDisc(cx,cy,12);house(cx-9,cy-8,[{id:13,n:3},{id:7,n:8},{id:12,n:2}]);if(kind==='main'){house(cx+3,cy-7,[{id:14,n:2},{id:5,n:6}]);house(cx-8,cy+3,[{id:15,n:1},{id:7,n:4}]);spawnX=cx+.5;spawnY=cy+.5;npc={x:cx+2.2,y:cy+.5,greeted:false};prepActor(npc,'Corvin','dealer');villagers.push({x:cx-1.4,y:cy+2.2,role:'quest',tex:'villager1',name:'Mara'});villagers.push({x:cx+1.2,y:cy-2.2,role:'hint',tex:'villager2',name:'Ivo'});villagers.push({x:cx+.5,y:cy+5.2,role:'guard',tex:'villager2',name:'Bram'});villagers.push({x:cx-2.2,y:cy-1.2,role:'guard',tex:'villager1',name:'Sela'});items.push({type:'gun',gun:2,x:cx+1.2,y:cy+1.1});items.push({type:'ammo',ammo:'rifle',x:cx-1.1,y:cy+.8});}else{const who=kind==='east'?['Nell','villager1']:['Pim','villager2'];villagers.push({x:cx+.4,y:cy+1.6,role:'hint',tex:who[1],name:who[0]});villagers.push({x:cx+2.2,y:cy-1.4,role:'guard',tex:'villager2',name:kind==='east'?'Otto':'Nia'});}for(const v of villagers)if(!v.kind)prepActor(v,v.name,v.role);}
+function buildWorld(seed){worldSeed=seed|0||1;mode='sandbox';allocWorld(WORLD);freshRunLists();bag={4:6,12:4};hotbar=[4,5,1,3,7,8,12,16];hotSel=0;rep=100;alertVillage=false;clock=22;buildMode=false;currentGun=0;owned=[true,true,false,false,false,false];ammo={rounds:90,shells:24,rifle:0,heavy:0,rockets:0,cells:0};gunUp=[0,0,0,0,0,0];level=1;xp=0;skillPoints=0;skills=Array(12).fill(false);powers={quad:0,speed:0,invulnerable:0};for(let y=0;y<WORLD;y++)for(let x=0;x<WORLD;x++){const i=y*WORLD+x;if(x<1||y<1||x>=WORLD-1||y>=WORLD-1){grid[i]=2;floorG[i]=2;continue;}const e=elev(x,y),n=h32(x,y,worldSeed);if(e<0.34){floorG[i]=3;continue;}if(e<0.4){floorG[i]=4;continue;}if(e>=0.72){floorG[i]=2;if(!(vn(x/4.5,y/4.5,worldSeed+4)>0.6)){const r=n%46;grid[i]=r===0?9:r===1?3:r===2?11:2;}}else{floorG[i]=0;if(e>0.48&&e<0.66&&n%37===0)grid[i]=5;else if(e>0.5&&e<0.64&&n%71===3)grid[i]=11;}}const spots=[[48,48],[150,50],[76,148]];const kinds=['main','east','south'];for(let i=0;i<3;i++){const jx=(h32(i,3,worldSeed)%9)-4,jy=(h32(i,4,worldSeed)%9)-4;placeVillage(spots[i][0]+jx,spots[i][1]+jy,kinds[i]);}makePlayer(spawnX,spawnY);baseGrid=grid.slice(0);bakeTorches();refreshTurrets();msg('Sandbox seed '+worldSeed+'. Right click mines. B builds.');}
+function freshRunLists(){enemies=[];items=[];projectiles=[];particles=[];villagers=[];npc=null;torchList=[];chestList=[];turretList=[];openDoors=new Set();kills=0;total=0;quest={active:false,kills:0,claimed:false};runSaved=false;runName='';}
+function makePlayer(x,y){player={x,y,a:.2,hp:100,armor:0,gold:40,bob:0,moving:false};Object.defineProperty(player,'ammo',{get:()=>ammo.shells,set:v=>ammo.shells=v});}
+function worldSaved(){try{const d=JSON.parse(localStorage.getItem('blockfall-world')||'');return !!(d&&d.v===1&&d.seed);}catch(e){return false;}}
+function saveWorld(){if(mode!=='sandbox'||!worldSeed||!baseGrid)return;const edits=[];for(let i=0;i<grid.length;i++)if(grid[i]!==baseGrid[i]||built[i])edits.push([i,grid[i],built[i],builtHp[i]]);const npcs=[];for(const v of villagers)npcs.push({name:v.name,hp:v.hp,dead:v.dead?1:0,hostile:v.hostile?1:0,gold:v.gold|0});const data={v:1,seed:worldSeed,clock,rep,alert:alertVillage?1:0,px:player.x,py:player.y,pa:player.a,hp:player.hp,armor:player.armor,gold:player.gold,level,xp,sp:skillPoints,skills,owned,gunUp,ammo,currentGun,bag,hotbar,hotSel,edits,doors:[...openDoors],torches:torchList.map(t=>[t.x,t.y]),chests:chestList,npcs,corvin:npc?{hp:npc.hp,dead:npc.dead?1:0,hostile:npc.hostile?1:0,gold:npc.gold|0,x:npc.x,y:npc.y}:null};try{localStorage.setItem('blockfall-world',JSON.stringify(data));}catch(e){msg('Could not save the world.');}}
+function loadWorld(){let data;try{data=JSON.parse(localStorage.getItem('blockfall-world')||'');}catch(e){return false;}if(!data||data.v!==1||!data.seed)return false;buildWorld(data.seed|0);for(const ed of data.edits||[]){const i=ed[0]|0;if(i<0||i>=grid.length)continue;grid[i]=ed[1]|0;built[i]=ed[2]?1:0;builtHp[i]=ed[3]|0;}if(data.bag)bag=data.bag;if(Array.isArray(data.hotbar)&&data.hotbar.length===8)hotbar=data.hotbar.map(n=>n|0);hotSel=clamp(data.hotSel|0,0,7);rep=clamp(data.rep??100,0,100)|0;alertVillage=!!data.alert;clock=Number.isFinite(data.clock)?data.clock:22;if(Array.isArray(data.skills)&&data.skills.length===12)skills=data.skills.map(Boolean);level=data.level|0||1;xp=data.xp|0;skillPoints=data.sp|0;if(Array.isArray(data.owned)&&data.owned.length===6)owned=data.owned.map(Boolean);if(Array.isArray(data.gunUp)&&data.gunUp.length===6)gunUp=data.gunUp.map(n=>n|0);if(data.ammo)ammo=Object.assign({rounds:0,shells:0,rifle:0,heavy:0,rockets:0,cells:0},data.ammo);currentGun=clamp(data.currentGun|0,0,5);if(!owned[currentGun])currentGun=0;openDoors=new Set((data.doors||[]).map(n=>n|0));torchList=(data.torches||[]).filter(t=>Array.isArray(t)).map(t=>({x:t[0]|0,y:t[1]|0}));if(Array.isArray(data.chests))chestList=data.chests;const by={};for(const n of data.npcs||[])by[n.name]=n;for(const v of villagers){const s=by[v.name];if(!s)continue;v.hp=s.hp;v.dead=!!s.dead;v.hostile=!!s.hostile;v.gold=s.gold|0;}if(npc&&data.corvin){npc.hp=data.corvin.hp;npc.dead=!!data.corvin.dead;npc.hostile=!!data.corvin.hostile;npc.gold=data.corvin.gold|0;if(Number.isFinite(data.corvin.x)){npc.x=data.corvin.x;npc.y=data.corvin.y;}}player.x=Number.isFinite(data.px)?data.px:spawnX;player.y=Number.isFinite(data.py)?data.py:spawnY;player.a=data.pa||0;player.hp=data.hp>0?data.hp:100;player.armor=data.armor|0;player.gold=data.gold|0;if(solid(player.x,player.y)){player.x=spawnX;player.y=spawnY;}bakeTorches();refreshTurrets();msg('World '+worldSeed+' loaded.');return true;}
+function beginPlay(){state='play';lockPointer();armMusic();}
+function loadOrNew(){initAudio();if(!loadWorld())buildWorld((Math.random()*1e9)>>>0);beginPlay();}
+function newWorld(){if(worldSaved()&&!confirm('Replace the saved sandbox world?'))return;initAudio();buildWorld((Math.random()*1e9)>>>0);saveWorld();beginPlay();}
+function startCampaign(){initAudio();initLevel();state='play';lockPointer();armMusic();}
+function toTitle(){if(mode==='sandbox')saveWorld();unlock();buildMode=false;initLevel();state='title';}
+function respawn(){player.hp=maxHP();player.armor=Math.max(0,player.armor-10);player.x=spawnX;player.y=spawnY;msg('You wake at the village. The base is still here.');}
+function drawCraft(){ctx.fillStyle='rgba(8,16,22,.94)';ctx.fillRect(70,24,500,300);centerText('CRAFT',48,22,'#f0d18e','monospace');ctx.font='12px monospace';ctx.textAlign='left';RECIPES.forEach((r,i)=>{const y=78+i*28,ok=canCraft(r);if(i===craftSel){ctx.fillStyle='#2c4250';ctx.fillRect(86,y-14,468,24);}ctx.fillStyle=ok?'#d7ecdf':'#7d8d86';const need=r.need.map(([id,n])=>n+' '+INAME[id]).join(' + ');ctx.fillText((i===craftSel?'> ':'  ')+r.name+'  x'+r.n+'   '+need+(r.table?'  (table)':''),96,y);});ctx.textAlign='center';ctx.fillStyle='#b7c9be';ctx.fillText('W/S choose   ENTER craft   C/ESC close',320,308);}
+function drawChest(){const ch=chestRef||{loot:[],gold:0,village:0};ctx.fillStyle='rgba(8,16,22,.94)';ctx.fillRect(90,70,460,200);centerText(ch.village?'VILLAGE CHEST':'CHEST',96,20,'#f0d18e','monospace');ctx.font='13px monospace';ctx.textAlign='left';ctx.fillStyle='#e6d7a8';let y=132;if(ch.gold){ctx.fillText(ch.gold+' gold',120,y);y+=20;}if(!(ch.loot||[]).length&&!ch.gold){ctx.fillStyle='#9aab9f';ctx.fillText('Empty.',120,y);}for(const it of ch.loot||[]){ctx.fillText((it.n||1)+' '+INAME[it.id],120,y);y+=20;}ctx.textAlign='center';ctx.fillStyle='#b7c9be';ctx.fillText('ENTER take all   ESC leave',320,250);}
+function drawPause(){ctx.fillStyle='rgba(6,12,16,.9)';ctx.fillRect(120,70,400,200);centerText('PAUSED',108,26,'#f0d18e','monospace');ctx.font='14px monospace';ctx.textAlign='center';ctx.fillStyle='#d5e4da';ctx.fillText('ENTER resume',320,160);ctx.fillText('T save and title',320,186);ctx.fillText('U new sandbox world',320,212);ctx.font='11px monospace';ctx.fillStyle='#93a79c';ctx.fillText(mode==='sandbox'?'Seed '+worldSeed:'Campaign fortress',320,244);}
+function drawLocalMap(){const s=5,rad=14,ox=W-(rad*2+1)*s-8,oy=8;ctx.globalAlpha=.82;ctx.fillStyle='#000';ctx.fillRect(ox-2,oy-2,(rad*2+1)*s+4,(rad*2+1)*s+4);const px=player.x|0,py=player.y|0;for(let y=-rad;y<=rad;y++)for(let x=-rad;x<=rad;x++){const wx=px+x,wy=py+y;let col='#102416';if(wx<0||wy<0||wx>=MW||wy>=MH)col='#000';else{const t=grid[wy*MW+wx],f=floorG[wy*MW+wx];col=t?(MINI[t]||'#999'):(f===3?'#1d4e86':f===2?'#4e514e':f===4?'#c2b48a':f===5?'#8d6840':f===1?'#6a4a2a':'#2c6a34');}ctx.fillStyle=col;ctx.fillRect(ox+(x+rad)*s,oy+(y+rad)*s,s-1,s-1);}ctx.fillStyle='#ffee66';ctx.fillRect(ox+rad*s,oy+rad*s,s,s);ctx.globalAlpha=1;}
 
 // ================= INPUT =================
 window.addEventListener('keydown',e=>{
@@ -856,15 +979,23 @@ window.addEventListener('keydown',e=>{
  if(e.code==='KeyN'&&!e.repeat){toggleMusic();return;}
  if(e.code==='KeyC'&&['leaderboard','win','dead'].includes(state)){if(confirm('Clear all local leaderboard scores? This cannot be undone.')){scoreRows=[];try{localStorage.removeItem('blockfall-scores');}catch(e){}}return;}
  if(state==='leaderboard'){if(e.code==='KeyT'){if(!e.repeat){boardView=boardView==='local'?'global':'local';if(boardView==='global')loadGlobal();}return;}if(e.code==='Escape'||e.code==='KeyL')state=scoreReturn;return;}
- if(e.code==='KeyL'&&['title','win','dead'].includes(state)){scoreReturn=state;boardView='global';state='leaderboard';loadGlobal();return;}
+ if(e.code==='KeyL'&&['title','win','dead','pause'].includes(state)){scoreReturn=state==='pause'?'play':state;boardView='global';state='leaderboard';loadGlobal();return;}
+ if(state==='craft'){if(e.code==='Escape'||e.code==='KeyC'){state='play';lockPointer();return;}if(e.code==='KeyW'||e.code==='ArrowUp')craftSel=(craftSel+RECIPES.length-1)%RECIPES.length;else if(e.code==='KeyS'||e.code==='ArrowDown')craftSel=(craftSel+1)%RECIPES.length;else if(e.code==='Enter'||e.code==='Space')doCraft(craftSel);return;}
+ if(state==='chest'){if(e.code==='Escape'||e.code==='KeyE'){state='play';lockPointer();return;}if(e.code==='Enter'||e.code==='Space')takeChest();return;}
+ if(state==='pause'){if(e.code==='Enter'||e.code==='Escape'){state='play';lockPointer();return;}if(e.code==='KeyT'){toTitle();return;}if(e.code==='KeyU'){newWorld();return;}return;}
  if(state==='skills'){if(['KeyK','Tab','Escape'].includes(e.code)){state='play';lockPointer();}return;}
  if(state==='dialogue'){if(['KeyE','Enter','Escape'].includes(e.code)){state='play';lockPointer();}return;}
  if(state==='shop'){if(e.repeat)return;if(e.code==='KeyE'||e.code==='Escape')closeShop();else if(e.code==='KeyW'||e.code==='ArrowUp')shopSel=(shopSel+SHOP.length-1)%SHOP.length;else if(e.code==='KeyS'||e.code==='ArrowDown')shopSel=(shopSel+1)%SHOP.length;else if(e.code==='Enter'||e.code==='Space')buyItem(shopSel);return;}
- if(state==='title'){if(e.code==='Enter'||e.code==='Space')startGame();return;}
- if(state==='dead'||state==='win'){if(e.code==='KeyR'||e.code==='Enter')startGame();return;}
+ if(state==='title'){if(e.code==='Enter'||e.code==='Space')loadOrNew();else if(e.code==='KeyU')newWorld();else if(e.code==='KeyC')startCampaign();return;}
+ if(state==='dead'||state==='win'){if(e.code==='KeyR'||e.code==='Enter')startCampaign();return;}
+ if(e.code==='Escape'&&state==='play'){if(mode==='sandbox')saveWorld();state='pause';unlock();mouseDown=false;for(const k in keys)keys[k]=false;return;}
  if(state!=='play')return;keys[e.code]=true;
- if(e.code==='KeyR'&&!e.repeat){startGame();return;}
+ if(e.code==='KeyR'&&!e.repeat){if(mode==='sandbox')respawn();else startCampaign();return;}
  if(e.code==='KeyM'&&!e.repeat)showMap=!showMap;
+ if(e.code==='KeyB'&&!e.repeat&&mode==='sandbox'){buildMode=!buildMode;msg(buildMode?'Build mode':'Gun mode');return;}
+ if(e.code==='KeyF'&&!e.repeat){trySteal();return;}
+ if(e.code==='KeyC'&&!e.repeat&&mode==='sandbox'){state='craft';craftSel=0;unlock();mouseDown=false;for(const k in keys)keys[k]=false;return;}
+ if(/^Digit[1-8]$/.test(e.code)&&!e.repeat&&mode==='sandbox'&&buildMode){hotSel=+e.code.slice(5)-1;return;}
  if(/^Digit[1-6]$/.test(e.code)&&!e.repeat)switchGun(+e.code[5]-1);
  if(e.code==='KeyE'&&!e.repeat)useAction();
  if(['KeyK','Tab'].includes(e.code)&&!e.repeat){state='skills';mouseDown=false;for(const k in keys)keys[k]=false;unlock();}
@@ -872,13 +1003,17 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>keys[e.code]=false);
 window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseDown=false;});
-cv.addEventListener('wheel',e=>{e.preventDefault();if(state==='play')cycleGun(e.deltaY>0?1:-1);},{passive:false});
+cv.addEventListener('wheel',e=>{e.preventDefault();if(state==='play'&&mode==='sandbox'&&buildMode)cycleHot(e.deltaY>0?1:-1);else if(state==='play')cycleGun(e.deltaY>0?1:-1);},{passive:false});
 cv.addEventListener('mousedown',e=>{
- initAudio();if(e.button!==0)return;
+ initAudio();
+ if(e.button===2){if(state==='play'&&mode==='sandbox'){if(document.pointerLockElement!==cv){lockPointer();return;}mineBlock();}return;}
+ if(e.button!==0)return;
  if(state==='skills'){const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)*W/r.width,y=(e.clientY-r.top)*H/r.height;const col=Math.floor((x-22)/205),tier=Math.floor((y-94)/54);if(col>=0&&col<3&&tier>=0&&tier<4&&x-(22+col*205)<184&&y-(94+tier*54)<43)purchaseSkill(col*4+tier);return;}
- if(state==='title'){startGame();return;}
+ if(state==='title'){loadOrNew();return;}
  if(state!=='play')return;
- if(document.pointerLockElement!==cv){lockPointer();return;}mouseDown=true;shoot();
+ if(document.pointerLockElement!==cv){lockPointer();return;}
+ if(mode==='sandbox'&&buildMode){placeBlock();return;}
+ mouseDown=true;shoot();
 });
 window.addEventListener('mouseup',e=>{if(e.button===0)mouseDown=false;});
 document.addEventListener('mousemove',e=>{if(state==='play'&&document.pointerLockElement===cv)player.a+=e.movementX*.0025;});
@@ -886,7 +1021,7 @@ cv.addEventListener('contextmenu',e=>e.preventDefault());
 
 initLevel();
 // small debug hook (used for automated testing)
-window.__game={get state(){return state;},get player(){return player;},get enemies(){return enemies;},get items(){return items;},get fps(){return fps;},get ammo(){return ammo;},get currentGun(){return currentGun;},get owned(){return owned;},get skills(){return skills;},get skillPoints(){return skillPoints;},get level(){return level;},get quest(){return quest;},get powers(){return powers;},get villagers(){return villagers;},get grid(){return grid;},get projectiles(){return projectiles;},get scores(){return scoreRows;},get gunUp(){return gunUp;},get shop(){return SHOP;},get npc(){return npc;},get boardStatus(){return globalStatus;},get boardRows(){return globalRows;},get boardFallen(){return globalFallen;},get boardView(){return boardView;},get onlineNote(){return onlineNote;},get time(){return time;},get musicOn(){return musicOn;},get musicReady(){return musicReady;},formatDate:formatScoreDate,openShop,buyItem,closeShop,damagePlayer,start:startGame,switchGun,shoot,update,purchaseSkill,grantXP,collect,talkTo,hurtEnemy,render};
+window.__game={get state(){return state;},get player(){return player;},get enemies(){return enemies;},get items(){return items;},get fps(){return fps;},get ammo(){return ammo;},get currentGun(){return currentGun;},get owned(){return owned;},get skills(){return skills;},get skillPoints(){return skillPoints;},get level(){return level;},get quest(){return quest;},get powers(){return powers;},get villagers(){return villagers;},get grid(){return grid;},get projectiles(){return projectiles;},get scores(){return scoreRows;},get gunUp(){return gunUp;},get shop(){return SHOP;},get npc(){return npc;},get boardStatus(){return globalStatus;},get boardRows(){return globalRows;},get boardFallen(){return globalFallen;},get boardView(){return boardView;},get onlineNote(){return onlineNote;},get time(){return time;},get musicOn(){return musicOn;},get musicReady(){return musicReady;},formatDate:formatScoreDate,openShop,buyItem,closeShop,damagePlayer,start:loadOrNew,campaign:startCampaign,newWorld,saveWorld,loadWorld,mineCell,placeCell,trySteal,doCraft,hurtNPC,get mode(){return mode;},get rep(){return rep;},get bag(){return bag;},get seed(){return worldSeed;},get buildMode(){return buildMode;},get hotbar(){return hotbar;},get clock(){return clock;},get alert(){return alertVillage;},switchGun,shoot,update,purchaseSkill,grantXP,collect,talkTo,hurtEnemy,render};
 // SoundCloud widget. The track stays on SoundCloud; a missing player never stops the game.
 let musicOn=true,musicArmed=false,musicReady=false,musicWidget=null,musicDuckTimer=0;
 try{musicOn=localStorage.getItem('blockfall-music')!=='0';}catch(e){}
