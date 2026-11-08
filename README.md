@@ -19,7 +19,9 @@ Sandbox is the main mode: a seeded 192×192 outdoor world with grass, dirt, ston
 ## Controls
 
 - WASD move
-- Shift run
+- Shift sprint (eases in and out; walk if you do not hold it)
+- H to toggle head bob
+- [ and ] to lower or raise mouse sensitivity (saved in this browser)
 - mouse aim after clicking the game
 - click or Space to fire
 - 1-6 or the wheel to switch guns
