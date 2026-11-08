@@ -1,6 +1,6 @@
 # Doom Built by Grok
 
-A Doom-style browser FPS with Minecraft-style blocks, six guns, a skill tree, NPCs and a local leaderboard.
+A Doom-style browser FPS with Minecraft-style blocks, six guns, a skill tree, NPCs, a global leaderboard, and local scores if you are offline.
 
 [Play it](https://spencermackenzie335-del.github.io/doom-built-by-grok/)
 
@@ -17,5 +17,5 @@ A Doom-style browser FPS with Minecraft-style blocks, six guns, a skill tree, NP
 - M for the map
 - K or Tab for skills
 - Q to dash
-- L for the leaderboard
+- L for the leaderboard (global top 10; T toggles your local scores)
 - R to restart
